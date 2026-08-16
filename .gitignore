@@ -1,0 +1,64 @@
+.gradle
+.claude
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Kotlin ###
+.kotlin
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### LaTeX ###
+/latex/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+
+### Python ###
+__pycache__/
+*.pyc
+
+### Benchmark tools (platform binaries, not committed) ###
+tools/nauty/dreadnaut
+tools/nauty/Traces
+tools/nauty/showg
+
+### Benchmark results (generated, not committed) ###
+results/
+
+### Experiment logs (generated, not committed) ###
+logs/
+
+### True-orbit cache (generated via cachedTrueOrbits, not committed) ###
+.orbit-cache/
