@@ -1,11 +1,13 @@
 package dialysis
 
+import dialysis.cl.TracesJni
 import dialysis.content.Content
 import dialysis.graph.Graph
 import dialysis.refinement.StablePartition
 import dialysis.refinement.colorRefine1WL
 import dialysis.refinement.initialPhase
 import dialysis.util.GraphIO
+import org.jgrapht.GraphTests.isBipartite
 import org.junit.jupiter.api.Test
 import java.io.File
 import kotlin.test.assertEquals
@@ -45,6 +47,19 @@ class InitialPhaseTest {
         }
     }
 
+    @Test
+    fun testInitialPhaseUntilPhase1() {
+        for (path in listOf("graphs/rnd-3-reg/rnd-3-reg-4000-6")) {
+            val g = Utils.ensureBipartite(load(path))
+            val p1 = colorRefine1WL(g, uniform(g))
+            val pInit = initialPhase(g, uniform(g), false)
+            assertPartitionsAllVertices(g, pInit)
+            assertCellsInCanonicalOrder(pInit)
+            assertTrue(pInit.cells.size >= p1.cells.size, "$path: initialPhase must not coarsen plain 1-WL")
+            println("Initial Phase classes: ${pInit.cells.size}")
+        }
+    }
+
     // ── Miyazaki is the classic instance built to defeat naive
     // individualization-refinement: plain 1-WL from a uniform start on the
     // unsubdivided graph doesn't even split it into more than one cell (see
@@ -61,7 +76,10 @@ class InitialPhaseTest {
         val pInit = initialPhase(g, uniform(g))
         assertPartitionsAllVertices(g, pInit)
         assertCellsInCanonicalOrder(pInit)
-        assertTrue(pInit.cells.size > p1.cells.size, "expected initialPhase (${pInit.cells.size} cells) to discriminate beyond plain 1WL (${p1.cells.size} cells)")
+        assertTrue(
+            pInit.cells.size > p1.cells.size,
+            "expected initialPhase (${pInit.cells.size} cells) to discriminate beyond plain 1WL (${p1.cells.size} cells)"
+        )
     }
 
     @Test
@@ -102,6 +120,7 @@ class InitialPhaseTest {
         val pRelabeled = initialPhase(relabeled, uniform(relabeled))
         assertEquals(p.cells.map { it.size }.sorted(), pRelabeled.cells.map { it.size }.sorted())
         assertEquals(p.pi(), pRelabeled.pi())
+        println("Initial Phase classes: ${p.cells.size}")
     }
 
     @Test
@@ -129,5 +148,70 @@ class InitialPhaseTest {
         val p = initialPhase(g, uniform(g))
         assertPartitionsAllVertices(g, p)
         assertCellsInCanonicalOrder(p)
+    }
+
+    @Test
+    fun checkWhereInitialPhaseEnhances1WL() {
+        val families = listOf(
+            "ag/ag2-17",
+            "cfi/cfi-200",
+            "cfi-rigid-d3/cfi-rigid-d3-0900-01-2",
+            "cfi-rigid-r2/cfi-rigid-r2-0792-01-1",
+            "cfi-rigid-s2/cfi-rigid-s2-0704-03-2",
+            "cfi-rigid-t2/cfi-rigid-t2-0720-04-2",
+            "cfi-rigid-z2/cfi-rigid-z2-0792-03-2",
+            "cfi-rigid-z3/cfi-rigid-z3-0720-01-2",
+            "cmz/cmz-50",
+            "grid/grid-2-25",
+            "grid-w/grid-w-2-25",
+            "had/had-20",
+            "had-sw/had-sw-20",
+            "latin/latin-10",
+            "latin-sw/latin-sw-11-2",
+            "lattice/lattice-12",
+            "mz/mz-50",
+            "mz-aug/mz-aug-30",
+            "mz-aug2/mz-aug2-28",
+            "paley/paley-73",
+            "pg/pg2-11",
+            "pp/pp-9-2",
+            "rnd-3-reg/rnd-3-reg-1000-11",
+            "sat_cfi_dim/sat_cfi_base_1000_a.dmc",
+            "sts/sts-25",
+            "sts-sw/sts-sw-19-6",
+            "triang/triang-11",
+        )
+        for (family in families) {
+            println("----------------------------")
+            val original = load("graphs/$family")
+            val threshold = original.n
+            val isBipartite = original.bipartition() != null
+            val familyName = family.split("/")[0]
+            println("Family $familyName is bipartite: $isBipartite")
+            val wl1 = colorRefine1WL(original, uniform(original))
+            val originalWL1Size = wl1.cells.size
+            var initialPhaseSize = 0
+            var initialPhaseForOriginalGraphSize = 0
+            println("1-Wl classes in original[isBipartite=${isBipartite}]=$originalWL1Size")
+            if (isBipartite) {
+                val p = initialPhase(original, uniform(original))
+                initialPhaseSize = p.cells.size
+                println("Initial Phase classes: ${p.cells.size}")
+            } else {
+                val bipartite = Utils.ensureBipartite(original)
+                val wl1 = colorRefine1WL(bipartite, uniform(bipartite))
+                println("1-Wl classes in bipartite=${wl1.cells.size}")
+                val p = initialPhase(bipartite, uniform(bipartite))
+                initialPhaseSize = p.cells.size
+                println("Initial Phase classes: ${p.cells.size}")
+                initialPhaseForOriginalGraphSize = p.cells.filter { it.max() < threshold }.size
+                println("Initial Phase classes for original graph: $initialPhaseForOriginalGraphSize")
+            }
+            println("Summary:$familyName has wl1:$originalWL1Size / Pi:$initialPhaseSize / Pi_TO_ORIGINAL:$initialPhaseForOriginalGraphSize")
+            if ((initialPhaseForOriginalGraphSize > originalWL1Size) || (initialPhaseSize > originalWL1Size && isBipartite)) {
+                println("INITIAL PHASE IS REQUIRED FOR $familyName")
+            }
+            println("----------------------------")
+        }
     }
 }

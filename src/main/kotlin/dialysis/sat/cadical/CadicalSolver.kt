@@ -1,5 +1,6 @@
 package dialysis.sat.cadical
 
+import dialysis.util.dialysisTempFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
@@ -22,7 +23,7 @@ class CadicalSolver : AutoCloseable {
         init {
             val stream = CadicalSolver::class.java.getResourceAsStream("/libcadicaljni.so")
                 ?: error("libcadicaljni.so not found in resources -- run src/main/cpp/build_cadical.sh first")
-            val tmp = Files.createTempFile("libcadicaljni", ".so")
+            val tmp = dialysisTempFile("libcadicaljni", ".so")
             tmp.toFile().deleteOnExit()
             stream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
             System.load(tmp.toAbsolutePath().toString())

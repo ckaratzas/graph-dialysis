@@ -49,6 +49,48 @@ class Graph(
         return Graph(verts.size, newAdj, newNames) to oldToNew
     }
 
+    /** Per-thread reusable scratch for [inducedGraphOnly] -- see its doc for why this exists. */
+    private val inducedScratch = ThreadLocal<IntArray?>()
+
+    /**
+     * Same induced subgraph as [induced], for callers that only need the resulting [Graph], not
+     * the old->new id map -- e.g. [dialysis.refinement.initialPhase]'s Phase 2, which calls this
+     * once per remainder component per vertex and immediately discards the map. [induced] pays
+     * O(n) every call for that map's allocation and initialization regardless of how small
+     * [verts] is; measured as the dominant per-call cost there (thousands of calls, each on a
+     * remainder component far smaller than n). This reuses one O(n) buffer per thread instead:
+     * mark [verts]' entries, build newAdj, then unmark exactly those entries (not the whole
+     * buffer) -- so calls after the first cost O(verts.size + degree-sum), not O(n). Safe under
+     * [initialPhase]'s Phase 2 concurrency (a bounded pool's parallel stream): each thread gets
+     * its own buffer, and no thread ever observes another thread's marks.
+     */
+    fun inducedGraphOnly(verts: IntArray): Graph {
+        var buf = inducedScratch.get()
+        if (buf == null || buf.size != n) {
+            buf = IntArray(n) { -1 }
+            inducedScratch.set(buf)
+        }
+        val oldToNew = buf
+        verts.forEachIndexed { newId, old -> oldToNew[old] = newId }
+        val newAdj = Array(verts.size) { newId ->
+            val old = verts[newId]
+            val oldNeighbors = adj[old]
+            var count = 0
+            for (w in oldNeighbors) if (oldToNew[w] >= 0) count++
+            val result = IntArray(count)
+            var idx = 0
+            for (w in oldNeighbors) {
+                val nw = oldToNew[w]
+                if (nw >= 0) result[idx++] = nw
+            }
+            result.sort()
+            result
+        }
+        val newNames = Array(verts.size) { newId -> names[verts[newId]] }
+        for (old in verts) oldToNew[old] = -1
+        return Graph(verts.size, newAdj, newNames)
+    }
+
     /**
      * Edge subdivision: one new vertex per edge, u-v becomes u-w-v. Subdivision
      * vertices are assigned ids [n, n+m) in the order their edge is first seen

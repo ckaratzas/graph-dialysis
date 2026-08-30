@@ -21,6 +21,7 @@
 #include <jni.h>
 #include <chrono>
 #include <cstdint>
+#include <malloc.h>
 
 namespace {
 
@@ -56,6 +57,18 @@ JNIEXPORT void JNICALL Java_dialysis_sat_cadical_CadicalSolver_nativeRelease(JNI
     auto* h = reinterpret_cast<Handle*>(handlePtr);
     ccadical_release(h->solver);
     delete h;
+    // Every allocation CaDiCaL made is correctly freed by the two lines above (Wrapper's
+    // destructor deletes its Solver, matching ccadical_init's `new`) -- this call is not patching
+    // a leak, it's a glibc-arena workaround: repeated create/destroy of large solvers across many
+    // short-lived worker threads (CadicalParallelDriver spins up a fresh thread pool per call)
+    // means glibc frees pages back to its own per-thread arena on `delete` but does not return
+    // them to the OS unless asked, so RSS can climb across repeated cycles even with nothing
+    // actually leaked. malloc_trim(0) asks glibc to hand freed-but-unreturned pages back to the OS
+    // right after this solver's memory is freed. (The dominant driver of the 2026-08-29 OOM crash
+    // turned out to be a separate, unbounded clause-generation bug -- see
+    // ImpliedDistanceClausesCadical.kt's MAX_PAIRS_PER_ANCHOR -- this trim is a real but secondary
+    // safeguard, kept because it's harmless.)
+    malloc_trim(0);
 }
 
 JNIEXPORT void JNICALL Java_dialysis_sat_cadical_CadicalSolver_nativeAdd(JNIEnv*, jobject, jlong handlePtr, jint lit) {

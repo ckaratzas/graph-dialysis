@@ -1,6 +1,5 @@
 package dialysis
 
-import dialysis.graph.Graph
 import dialysis.refinement.NativeWL1
 import dialysis.util.GraphIO
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -19,8 +18,12 @@ class `1WLTest` {
         val colorClasses = HashMap<Int, MutableList<Int>>()
         colors.forEachIndexed { v, c -> colorClasses.getOrPut(c) { mutableListOf() }.add(v) }
         val classes = colorClasses.values.sortedBy { it.min() }
-        println("cfi-rigid-t2-0480-04-2: ${classes.size} classes over ${g.n} vertices")
-        println(classes)
+
+        assertEquals(g.n, colors.size)
+        assertEquals(g.n, classes.sumOf { it.size })
+        // Below g.n by design: this CFI instance is a known 1-WL-indistinguishable case, so the
+        // coarse partition (not a discrete one) is the expected, regression-worthy result.
+        assertEquals(635, classes.size)
     }
 
     @Test

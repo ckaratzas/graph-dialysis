@@ -166,6 +166,10 @@ JNIEXPORT jintArray JNICALL Java_dialysis_ahu_ColoredAHU_computeLabels(
     env->ReleaseIntArrayElements(j_neighbors, neighbors, JNI_ABORT);
 
     jintArray out = env->NewIntArray(N);
+    // NewIntArray returns null (with a pending OutOfMemoryError) under heap exhaustion -- see
+    // paige_tarjan_wl1.cpp's newIntArray for why this must be checked before the SetIntArrayRegion
+    // below, rather than crashing with a native SIGSEGV instead of a clean Java OutOfMemoryError.
+    if (out == nullptr) return nullptr;
     env->SetIntArrayRegion(out, 0, N, result.data());
     return out;
 }

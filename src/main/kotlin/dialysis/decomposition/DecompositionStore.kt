@@ -2,6 +2,7 @@ package dialysis.decomposition
 
 import dialysis.graph.Graph
 import dialysis.util.boundedPool
+import dialysis.util.dialysisTempFile
 import java.io.BufferedOutputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -27,8 +28,8 @@ import java.nio.file.Files
  */
 class DecompositionStore private constructor(
     private val n: Int,
-    private val buffer: MappedByteBuffer,
-    private val offsets: IntArray,   // offsets[v] = byte start of v's own record (only meaningful when hasVertex[v])
+    private val segments: List<MappedByteBuffer>,
+    private val offsets: LongArray,   // offsets[v] = byte start of v's own record (only meaningful when hasVertex[v])
     private val hasVertex: BooleanArray,
 ) {
     /** True iff [v]'s decomposition was actually computed and stored (see [build]'s [needed]
@@ -38,6 +39,12 @@ class DecompositionStore private constructor(
      *  old inference relied on offsets being a monotonic running total assigned while iterating
      *  `v` in order, which no longer holds. */
     fun has(v: Int): Boolean = hasVertex[v]
+
+    /** True iff [build] was called with `needed = null` (or an all-true mask), i.e. this store has
+     *  a record for EVERY vertex -- the property a caller passing this as `initialPhase`'s
+     *  `precomputedStore` must have, since that call's own `needsWork` mask can differ from
+     *  whatever mask (if any) built this store. */
+    val coversEveryVertex: Boolean get() = hasVertex.all { it }
 
     /** Full decomposition of root [v], deserialized on demand from the mapped bytes. */
     fun get(v: Int): Decomposition {
@@ -83,8 +90,11 @@ class DecompositionStore private constructor(
     }
 
     private fun reader(v: Int): Reader {
-        val dup = buffer.duplicate()
-        dup.position(offsets[v])
+        val off = offsets[v]
+        val seg = (off / SEGMENT_SIZE).toInt()
+        val localOff = (off % SEGMENT_SIZE).toInt()
+        val dup = segments[seg].duplicate()
+        dup.position(localOff)
         return Reader(dup)
     }
 
@@ -104,6 +114,17 @@ class DecompositionStore private constructor(
 
     companion object {
         /**
+         * Ceiling on a single mapped segment's size. A [MappedByteBuffer] is int-addressed (Java
+         * NIO buffer position/limit/capacity are all `Int`), so ANY single mapping is capped at
+         * ~2GiB (Int.MAX_VALUE) regardless of how offsets are tracked -- a dense/large instance's
+         * total record bytes can exceed that (confirmed: n=9536 post-subdivision on
+         * cfi-rigid-s2-0832-03-1 overflowed the old single-mapping, Int-tracked `pos` into
+         * negative, which `FileChannel.map` then rejected as "Negative size"). [build] shards the
+         * backing file into segments of at most this size instead of one mapping.
+         */
+        private const val SEGMENT_SIZE = 1L shl 30   // 1 GiB
+
+        /**
          * Computes and stores dialysis(g, v) for every v with [needed]==null or
          * [needed]\[v\]==true; other vertices get a zero-length record (callers must
          * never query them — [initialPhase] only queries vertices it marked needed,
@@ -111,9 +132,9 @@ class DecompositionStore private constructor(
          */
         fun build(g: Graph, needed: BooleanArray? = null): DecompositionStore {
             val n = g.n
-            val tmp = Files.createTempFile("dialysis-decomp", ".bin")
+            val tmp = dialysisTempFile("dialysis-decomp", ".bin")
             tmp.toFile().deleteOnExit()
-            val offsets = IntArray(n + 1)
+            val offsets = LongArray(n + 1)
             val hasVertex = BooleanArray(n) { needed == null || needed[it] }
             val neededVertices = (0 until n).filter { hasVertex[it] }
 
@@ -125,7 +146,7 @@ class DecompositionStore private constructor(
             // record count in memory at once, not every vertex's O(n)-sized record simultaneously
             // (which would reintroduce exactly the O(n^2) heap blowup this store's mmap design
             // exists to avoid — see the class doc).
-            var pos = 0
+            var pos = 0L
             val writeLock = Any()
             BufferedOutputStream(FileOutputStream(tmp.toFile())).use { fileOut ->
                 boundedPool.submit {
@@ -138,7 +159,22 @@ class DecompositionStore private constructor(
                         val bytes = ByteBuffer.allocate(recordSize(dec, n))
                         writeRecord(bytes, dec, n)
                         val rec = bytes.array()
+                        require(rec.size <= SEGMENT_SIZE) {
+                            "single decomposition record (${rec.size} bytes) exceeds SEGMENT_SIZE -- n=$n is too large for this store's on-disk format"
+                        }
                         synchronized(writeLock) {
+                            // Never let one record straddle a segment boundary -- each segment
+                            // becomes its own MappedByteBuffer, so a record must be readable as
+                            // one contiguous range within a single segment. Padding with zero
+                            // bytes to skip to the next boundary is the only reason a write here
+                            // is ever non-contiguous.
+                            val segOfStart = pos / SEGMENT_SIZE
+                            val segOfEnd = (pos + rec.size - 1) / SEGMENT_SIZE
+                            if (rec.isNotEmpty() && segOfStart != segOfEnd) {
+                                val pad = SEGMENT_SIZE - pos % SEGMENT_SIZE
+                                fileOut.write(ByteArray(pad.toInt()))
+                                pos += pad
+                            }
                             offsets[v] = pos
                             fileOut.write(rec)
                             pos += rec.size
@@ -147,10 +183,16 @@ class DecompositionStore private constructor(
                 }.get()
             }
             offsets[n] = pos
-            val channel = FileChannel.open(tmp, java.nio.file.StandardOpenOption.READ)
-            val mapped = channel.use { it.map(FileChannel.MapMode.READ_ONLY, 0, pos.toLong()) }
+            val numSegments = ((pos + SEGMENT_SIZE - 1) / SEGMENT_SIZE).toInt()
+            val segments = FileChannel.open(tmp, java.nio.file.StandardOpenOption.READ).use { channel ->
+                List(numSegments) { i ->
+                    val start = i.toLong() * SEGMENT_SIZE
+                    val len = minOf(SEGMENT_SIZE, pos - start)
+                    channel.map(FileChannel.MapMode.READ_ONLY, start, len)
+                }
+            }
             Files.deleteIfExists(tmp)
-            return DecompositionStore(n, mapped, offsets, hasVertex)
+            return DecompositionStore(n, segments, offsets, hasVertex)
         }
 
         private fun intsSize(arr: IntArray): Int = 4 + arr.size * 4

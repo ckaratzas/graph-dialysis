@@ -1,10 +1,9 @@
-package dialysis.configcomparison
+package dialysis
 
-import dialysis.Utils
 import dialysis.content.Content
 import dialysis.graph.Graph
-import dialysis.refinement.uniformSeed
 import dialysis.refinement.initialPhase
+import dialysis.refinement.uniformSeed
 import dialysis.sat.cadical.buildCadicalEncoding
 import dialysis.sat.cadical.buildCadicalEncodingSideSwapped
 import dialysis.sat.cadical.driveToOrbitsCadicalParallel
@@ -26,18 +25,20 @@ import java.io.PrintWriter
  */
 class FullCampaignSatPiTest {
     /** Instances whose effective (post-bipartite-subdivision) vertex count exceeds this are skipped. */
-    private val maxEffectiveVertices = 4140
+    private val maxEffectiveVertices = 1000
 
     /** Which `graphs/` subdirectories to sweep -- edit this set to run a subset instead of everything. */
     private val familiesToProcess = setOf("cfi-rigid-d3")
 
+    private val resultsFile = File("results/d3-cadical.csv")
+
     /**
-     * Worker count passed to [driveToOrbitsCadicalParallel]: colour classes are partitioned across
+     * Worker count passed to [dialysis.sat.cadical.driveToOrbitsCadicalParallel]: colour classes are partitioned across
      * this many threads (longest-processing-time-first, see CadicalParallelDriver.kt), each with its
      * own CaDiCaL instance. `1` runs everything on a single worker -- functionally identical to no
      * parallelism, just going through the same code path.
      */
-    private val cadicalParallelism = 1
+    private val cadicalParallelism = 2
 
     /** Colour classes larger than this fraction of `n` route to a PI_ONLY row (report the colouring,
      *  skip SAT entirely) rather than risk a pathological encoding. */
@@ -50,11 +51,10 @@ class FullCampaignSatPiTest {
     private val anchorK = 8
 
     /** Long-pass per-query timeout; the short first pass is fixed at 1s (see
-     *  [driveToOrbitsCadicalParallel]'s own doc on two-pass scheduling). */
+     *  [dialysis.sat.cadical.driveToOrbitsCadicalParallel]'s own doc on two-pass scheduling). */
     private val perQueryTimeoutMs = 10_000L
     private val shortMs = 1_000L
 
-    private val resultsFile = File("results/full-campaign-cadical.csv")
     private val knownPiOnlyFamilies = setOf("ag", "had", "triang", "latin", "paley", "pg", "pp")
 
     private val familyDirs = (File("graphs").listFiles()?.filter { it.isDirectory } ?: emptyList())
@@ -65,7 +65,7 @@ class FullCampaignSatPiTest {
         "initial_phase_classes", "initial_phase_ms",
         "variables", "clauses_bijection", "clauses_edge", "swap_applied",
         "queries_issued", "sat", "unsat", "unknown",
-        "solve_ms_total", "recovered_orbits", "true_orbits", "gt_ms", "gt_timed_out", "status", "total_ms",
+        "solve_ms_total", "recovered_orbits", "true_orbits", "gt_source", "status", "total_ms",
     )
     private val header = headerColumns.joinToString(",")
 
@@ -143,7 +143,7 @@ class FullCampaignSatPiTest {
                 classes, colouringMs,
                 "", "", "", "",
                 "", "", "", "",
-                "", classes, "", "", "pending", "PENDING_GT", colouringMs,
+                "", classes, "", "", "PI_ONLY", colouringMs,
             ).joinToString(",")
         }
 
@@ -168,12 +168,13 @@ class FullCampaignSatPiTest {
 
         val recovered = result.orbits.size
         val totalMs = colouringMs + solveMs
+        val status = if (result.unknown == 0) "CERTIFIED" else "PARTIAL"
         return listOf(
             family, path, g.n, g.m, "SAT", cadicalParallelism,
             classes, colouringMs,
             refEncoding.numVars, refEncoding.bijectionConstraints, refEncoding.edgeConflictClauses, (refSwap != null),
             result.queriesIssued, result.sat, result.unsat, result.unknown,
-            solveMs, recovered, "", "", "pending", "PENDING_GT", totalMs,
+            solveMs, recovered, "", "", status, totalMs,
         ).joinToString(",")
     }
 }

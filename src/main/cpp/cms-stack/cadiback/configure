@@ -1,0 +1,92 @@
+#!/bin/sh
+
+debug=no
+flip=unknown
+
+usage () {
+cat <<EOF
+usage: configure [-h|--help][-g|--debug][--no-flip]
+
+  -h | --help   print this command line option summary
+
+  -g | --debug  build with assertion checking and symbols
+
+  --no-flip     disable flipping with '-DNFLIP' at compile-time
+                (to support old legacy versions of 'CaDiCaL')
+EOF
+exit 0
+}
+
+die () {
+  echo "configure: error: $*" 1>&2
+  exit 1
+}
+
+msg () {
+  echo "[configure] $*"
+}
+
+checkdir () {
+  [ -d "$1" ] || die "could not find '$1'"
+}
+
+checkfile () {
+  [ -f "$1" ] || die "could not find '$1'"
+}
+
+[ x"$CADICAL" = x ] && CADICAL="../cadical"
+
+checkdir "$CADICAL"
+cadicalversion="`cat $CADICAL/VERSION`"
+
+checkdir "$CADICAL/src"
+checkdir "$CADICAL/build"
+
+checkfile "$CADICAL/src/cadical.hpp"
+checkfile "$CADICAL/build/libcadical.a"
+
+while [ $# -gt 0 ]
+do
+  case $1 in
+    -h|--help) usage;;
+    -g|--debug) debug=yes;;
+    --no-flip) flip=no;;
+    *) die "invalid option '$1' (try '-h')";;
+  esac
+  shift
+done
+
+msg "Using CADICAL='$CADICAL' version '$cadicalversion'"
+
+if [ x"`grep 'bool flip' $CADICAL/src/cadical.hpp`" = x ]
+then
+  [ $flip = no ] || \
+    die "no 'CaDiCaL' support for 'bool flip (int lit)' (update version or use '--no-flip')"
+  flip=no
+else
+  msg "your 'CaDiCaL' version supports 'bool flip (int lit)'"
+  flip=yes
+fi
+
+if [ x"$CXX" = x ]
+then
+  COMPILE="g++ -fPIC -Wall"
+else
+  COMPILE="$CXX -fPIC -W"
+fi
+
+if [ $debug = yes ]
+then
+  COMPILE="$COMPILE -g -ggdb3"
+else
+  COMPILE="$COMPILE -O3 -std=c++17 -DNDEBUG"
+fi
+
+[ $flip = no ] && COMPILE="$COMPILE -DNFLIP"
+
+msg "Compiling with '$COMPILE'"
+
+rm -f makefile
+sed -e "s/@COMPILE@/$COMPILE/" makefile.in > makefile
+
+msg "Generated 'makefile' (run 'make' to compile)"

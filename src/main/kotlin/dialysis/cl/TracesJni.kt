@@ -1,6 +1,7 @@
 package dialysis.cl
 
 import dialysis.graph.Graph
+import dialysis.util.dialysisTempFile
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.nio.file.Files
@@ -34,7 +35,7 @@ class TracesJni : CanonicalLabeler {
         init {
             val stream = TracesJni::class.java.getResourceAsStream("/libtracesjni.so")
                 ?: error("libtracesjni.so not found in resources — run src/main/cpp/build_traces.sh first")
-            val tmp = Files.createTempFile("libtracesjni", ".so")
+            val tmp = dialysisTempFile("libtracesjni", ".so")
             tmp.toFile().deleteOnExit()
             stream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
             System.load(tmp.toAbsolutePath().toString())

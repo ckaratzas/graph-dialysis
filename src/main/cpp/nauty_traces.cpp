@@ -131,6 +131,10 @@ JNIEXPORT jdoubleArray JNICALL Java_dialysis_cl_TracesJni_nativeCanon(
         (double)stats.numgenerators, stats.grpsize1, (double)stats.grpsize2,
     };
     jdoubleArray result = env->NewDoubleArray(6);
+    // Same null-after-allocation-failure check as paige_tarjan_wl1.cpp's newIntArray -- under heap
+    // exhaustion this returns null with a pending OutOfMemoryError; skip the dereferencing
+    // SetDoubleArrayRegion below and let that propagate cleanly instead of a native SIGSEGV.
+    if (result == nullptr) return nullptr;
     env->SetDoubleArrayRegion(result, 0, 6, statsOut);
     return result;
 }
@@ -193,8 +197,14 @@ JNIEXPORT jobjectArray JNICALL Java_dialysis_cl_TracesJni_nativeGenerators(
 
     jclass intArrayClass = env->FindClass("[I");
     jobjectArray result = env->NewObjectArray((jsize)collected.size(), intArrayClass, nullptr);
+    // Same null-after-allocation-failure check as paige_tarjan_wl1.cpp's newIntArray, on both the
+    // outer array and each per-generator array the loop below allocates -- under heap exhaustion
+    // either can return null (with a pending OutOfMemoryError already thrown), and dereferencing it
+    // in SetObjectArrayElement/SetIntArrayRegion is a native SIGSEGV instead of a clean propagation.
+    if (result == nullptr) return nullptr;
     for (size_t i = 0; i < collected.size(); i++) {
         jintArray perm = env->NewIntArray(n);
+        if (perm == nullptr) return nullptr;
         env->SetIntArrayRegion(perm, 0, n, collected[i].data());
         env->SetObjectArrayElement(result, (jsize)i, perm);
         env->DeleteLocalRef(perm);

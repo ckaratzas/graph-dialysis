@@ -1,6 +1,7 @@
 package dialysis.refinement
 
 import dialysis.graph.Graph
+import dialysis.util.dialysisTempFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
@@ -19,7 +20,7 @@ object NativeWL1 {
     init {
         val stream = NativeWL1::class.java.getResourceAsStream("/libwl1jni.so")
             ?: error("libwl1jni.so not found in resources — run src/main/cpp/build_wl1.sh first")
-        val tmp = Files.createTempFile("libwl1jni", ".so")
+        val tmp = dialysisTempFile("libwl1jni", ".so")
         tmp.toFile().deleteOnExit()
         stream.use { Files.copy(it, tmp, StandardCopyOption.REPLACE_EXISTING) }
         System.load(tmp.toAbsolutePath().toString())

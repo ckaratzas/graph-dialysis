@@ -9,6 +9,25 @@ import dialysis.graph.Graph
 const val DEFAULT_EDGE_THRESHOLD = 1024L
 
 /**
+ * One row of [CadicalEncoding.varOf]: only admissible (colour/side-compatible) columns are ever
+ * stored, backed by a lazily-allocated map instead of an `n`-length array. A dense `IntArray(n)`
+ * per row (`n^2` total) was measured as the actual OOM cause on a ~16700-effective-vertex instance
+ * (~1GiB per full varOf matrix, several live at once across a test's own stats print, the driver's
+ * former ref-encoding build, and each worker's real encoding) -- almost all of those `n^2` entries
+ * are `-1` (colour classes are typically a small fraction of `n`, which is the entire point of
+ * refining the colouring before the SAT path). `get`/`set` operators keep every existing
+ * `varOf[i][j]` / `varOf[i][j] = x` call site unchanged; only this row's backing storage differs
+ * from before.
+ */
+class SparseVarRow {
+    private var entries: HashMap<Int, Int>? = null
+    operator fun get(j: Int): Int = entries?.get(j) ?: -1
+    operator fun set(j: Int, value: Int) {
+        (entries ?: HashMap<Int, Int>().also { entries = it })[j] = value
+    }
+}
+
+/**
  * The colour-filtered permutation encoding for "does some automorphism map `u` to `v`?": a
  * permutation matrix restricted to colour-admissible entries (`varOf`), plus edge-preservation
  * clauses. Building this is a pure function of the graph and its colouring -- no solver state is
@@ -17,7 +36,7 @@ const val DEFAULT_EDGE_THRESHOLD = 1024L
  */
 class CadicalEncoding(
     val g: Graph,
-    val varOf: Array<IntArray>, // varOf[i][j] = 1-indexed sat var id if j admissible for i, else -1
+    val varOf: Array<SparseVarRow>, // varOf[i][j] = 1-indexed sat var id if j admissible for i, else -1
     val numVars: Int,
     val groups: List<List<Int>>,
     val bijectionConstraints: Int = 0,
@@ -43,22 +62,96 @@ private fun exactlyOne(solver: CadicalSolver, lits: List<Int>): Int {
     return clauses
 }
 
-fun buildCadicalEncoding(g: Graph, colorOf: (Int) -> Content): Pair<CadicalSolver, CadicalEncoding> =
-    buildCadicalEncodingHybrid(g, DEFAULT_EDGE_THRESHOLD, colorOf)
-
-fun buildCadicalEncodingHybrid(g: Graph, edgeThreshold: Long, colorOf: (Int) -> Content): Pair<CadicalSolver, CadicalEncoding> {
+/**
+ * Colour+degree+side grouping [buildCadicalEncodingHybrid] partitions vertices into, WITHOUT
+ * building its O(n^2) `varOf` matrix, a [CadicalSolver], or any SAT clauses -- for callers (e.g.
+ * [dialysis.sat.cadical.driveToOrbitsCadicalParallel]'s work-queue setup) that only need group
+ * membership/sizes. Building a full [CadicalEncoding] just to read `.groups` was measured as pure
+ * waste: a discarded solver plus a discarded n-by-n matrix (~1GiB at n≈16700) for zero use beyond
+ * `.groups.size`.
+ */
+fun computePreserveGroups(g: Graph, colorOf: (Int) -> Content): List<List<Int>> {
     val n = g.n
     val bipartition = g.bipartition()
     fun side(v: Int): Int = if (bipartition == null) 0 else if (v in bipartition.first) 0 else 1
     val degree = IntArray(n) { g.adj[it].size }
+    return (0 until n).groupBy { v -> Triple(colorOf(v), degree[v], side(v)) }.values.toList()
+}
 
-    val groups: List<List<Int>> = (0 until n)
-        .groupBy { v -> Triple(colorOf(v), degree[v], side(v)) }
-        .values.toList()
+/** Same rationale as [computePreserveGroups], for [buildCadicalEncodingSideSwapped]'s grouping.
+ *  Null exactly when [buildCadicalEncodingSideSwapped] itself would return null (non-bipartite,
+ *  or unequal-sized parts). */
+fun computeSwapGroups(g: Graph, colorOf: (Int) -> Content): List<List<Int>>? {
+    val n = g.n
+    val bipartition = g.bipartition() ?: return null
+    val (partA, partB) = bipartition
+    if (partA.size != partB.size) return null
+    return (0 until n).groupBy { v -> Pair(colorOf(v), g.adj[v].size) }.values.toList()
+}
+
+fun buildCadicalEncoding(g: Graph, colorOf: (Int) -> Content): Pair<CadicalSolver, CadicalEncoding> =
+    buildCadicalEncodingHybrid(g, DEFAULT_EDGE_THRESHOLD, colorOf)
+
+/**
+ * Exact variable/edge-conflict-clause counts [buildCadicalEncodingHybrid] would produce, computed
+ * WITHOUT ever constructing a [CadicalSolver] or calling `addClause` -- the GLOBAL-formula
+ * counterpart of [estimatePerQueryEncodingSize] (see `PerQueryCadicalEncoder.kt`).
+ * `edgeConflictClauses` is exactly `sum over edges (i,k) of |C(i)| * |C(k)|` (the predictor
+ * `project_dialysis_final_measurements_task2` memory settled on for when per-query filtering, or
+ * the plain global formula, is even worth attempting) -- computable in one pass over [g]'s edges
+ * from [colorOf] alone, before any solving, so this is safe to call on every campaign instance
+ * regardless of how large the real encoding would turn out to be.
+ */
+class GlobalEncodingSizeEstimate(val variables: Long, val edgeConflictClauses: Long, val bijectionClauses: Long)
+
+fun estimateGlobalEncodingSize(g: Graph, colorOf: (Int) -> Content, edgeThreshold: Long = DEFAULT_EDGE_THRESHOLD): GlobalEncodingSizeEstimate {
+    val groups = computePreserveGroups(g, colorOf)
+    val groupOfVertex = IntArray(g.n)
+    for ((gi, members) in groups.withIndex()) for (v in members) groupOfVertex[v] = gi
+
+    var variables = 0L
+    // exactlyOne's naive pairwise "at-most-one" is 1 + k*(k-1)/2 clauses per row/column of a
+    // k-member class, and buildCadicalEncodingHybrid calls it once per row AND once per column of
+    // EVERY class (see that function) -- i.e. O(k^3) total per class, cubic in class size, unlike
+    // `variables` (O(k^2)) or edgeConflictClauses (bounded by edgeThreshold's hybrid switch).
+    // 2026-08-29: this was the actual, previously unestimated driver of a real BenchmarkRunner
+    // cmz-family OOM crash (peak_rss_mb 1149MB -> 8169MB over a 7-instance sweep) -- a class with
+    // few crossing edges (keeping edgeConflictClauses low, passing the GLOBAL gate below) can still
+    // have a catastrophic bijection-clause cost the old estimate never saw at all.
+    var bijectionClauses = 0L
+    for (members in groups) {
+        val k = members.size.toLong()
+        variables += k * k
+        bijectionClauses += 2 * k * (1 + k * (k - 1) / 2)
+    }
+
+    var edgeConflictClauses = 0L
+    for (i in 0 until g.n) {
+        for (k in g.adj[i]) {
+            if (k <= i) continue
+            val membersI = groups[groupOfVertex[i]]
+            val membersK = groups[groupOfVertex[k]]
+            val classProduct = membersI.size.toLong() * membersK.size.toLong()
+            if (classProduct <= edgeThreshold) {
+                for (j in membersI) {
+                    val adjSet = g.adj[j].toHashSet()
+                    for (l in membersK) if (l !in adjSet) edgeConflictClauses++
+                }
+            } else {
+                edgeConflictClauses += membersI.size // one clause per j, regardless of support size -- matches the real encoder
+            }
+        }
+    }
+    return GlobalEncodingSizeEstimate(variables, edgeConflictClauses, bijectionClauses)
+}
+
+fun buildCadicalEncodingHybrid(g: Graph, edgeThreshold: Long, colorOf: (Int) -> Content): Pair<CadicalSolver, CadicalEncoding> {
+    val n = g.n
+    val groups: List<List<Int>> = computePreserveGroups(g, colorOf)
     val groupOfVertex = IntArray(n)
     for ((gi, members) in groups.withIndex()) for (v in members) groupOfVertex[v] = gi
 
-    val varOf = Array(n) { IntArray(n) { -1 } }
+    val varOf = Array(n) { SparseVarRow() }
     var nextVar = 0
     for (members in groups) {
         for (i in members) for (j in members) {
@@ -137,9 +230,11 @@ fun buildCadicalEncodingSideSwapped(g: Graph, colorOf: (Int) -> Content): Pair<C
     val sideOfA = partA.toHashSet()
     fun side(v: Int): Int = if (v in sideOfA) 0 else 1
 
-    val groups: List<List<Int>> = (0 until n).groupBy { v -> Pair(colorOf(v), g.adj[v].size) }.values.toList()
+    // Safe to force-unwrap: this function already returned null above for exactly the two
+    // conditions (non-bipartite, unequal-sized parts) that would make computeSwapGroups null too.
+    val groups: List<List<Int>> = computeSwapGroups(g, colorOf)!!
 
-    val varOf = Array(n) { IntArray(n) { -1 } }
+    val varOf = Array(n) { SparseVarRow() }
     var nextVar = 0
     val sideAOf = HashMap<Int, List<Int>>()
     val sideBOf = HashMap<Int, List<Int>>()

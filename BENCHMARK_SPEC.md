@@ -9,6 +9,16 @@ instance, and CaDiCaL's memory grows with learned clauses. **Measure peak RSS pe
 largest n before committing to 16-way parallelism** — if a single solver at n = 3780 uses more than
 ~400 MB, cap the worker count accordingly and report the cap.
 
+**Disk, not just RAM, is a per-instance constraint on a large subdivided graph.**
+`DecompositionStore` (built whenever `dispatchColouring` compares 1-WL against the subdivision, see
+Part 2's `--noSubdivision`) spills an O(n^2) scratch file to `java.io.tmpdir`, `n` being the
+(possibly subdivided) vertex count it was built for — confirmed to exceed a small `java.io.tmpdir`
+partition (e.g. a VM's tmpfs `/tmp`, distinct from the machine's main disk) on a subdivided instance
+upward of ~8000 vertices, surfacing as "No space left on device" with the actual disk showing free.
+Point `java.io.tmpdir` at the main disk with `JAVA_OPTS="-Ddialysis.tmpDir=/path/on/big/disk"
+scripts/run_benchmark.sh ...`, or avoid building the store at all for a family where it doesn't pay
+off with `--noSubdivision=true` (see Part 2).
+
 ---
 
 ## Part 1 — Ground truth
@@ -21,8 +31,14 @@ and joined into a benchmark CSV afterwards with `scripts/merge_ground_truth.py`.
 ```
 tool         nauty's dreadnaut, in Traces mode (`At`) -- orbit count only, no canonical form needed
 timeout      per-instance, recorded; a timeout produces no true_orbits for that row, not a guess
-input        the same bipartite-subdivided graph the benchmark CLI analyzes (ensureBipartite is
-             applied identically on both sides so recovered_orbits and true_orbits are comparable)
+input        `--subdivide` controls this (default `auto`: subdivide iff not bipartite). Since Task 1
+             (FINAL_MEASUREMENTS_SPEC.md), the benchmark CLI always SOLVES on the ORIGINAL graph, so
+             `recovered_orbits` counts orbits over the original n vertices only, never a
+             subdivision's -- use `--subdivide=never` to make `true_orbits` comparable to it (`auto`/
+             `always` count MORE orbits whenever they do subdivide, since Aut(sd(G)) === Aut(G) means
+             orbits(sd(G)) = orbits_on_V(G) + orbits_on_E(G), not just the first term). Every row
+             records which happened in `gt_subdivided`, and `scripts/merge_ground_truth.py` skips the
+             recovered/true comparison rather than flag a spurious disagreement when it's `true`.
 machine      one dreadnaut subprocess per instance, single-threaded, fully isolated from the JVM
              benchmark process (no shared state, a hung/killed instance can't affect another)
 ```
@@ -33,10 +49,13 @@ some of the graph families in this corpus, where Traces still returns quickly.
 ### 1.2 Reporting
 
 `scripts/ground_truth.py`'s own CSV: `family, instance, n, m, n_effective, true_orbits, gt_ms,
-gt_timed_out`. `scripts/merge_ground_truth.py` joins this onto a benchmark CSV by `instance`,
-filling `true_orbits`/`gt_source` and recomputing `status` (EXACT when `recovered_orbits ==
-true_orbits` and `unknown == 0`, PARTIAL otherwise) — printing a `DISAGREEMENT` line for any
-certified-but-mismatched row rather than silently overwriting it.
+gt_timed_out, gt_outcome, gt_tool, gt_memory_cap_mb, gt_timeout_s, gt_subdivided` (the last five added
+by FINAL_MEASUREMENTS_SPEC.md Task 0 and this section's `--subdivide` support). `scripts/
+merge_ground_truth.py` joins this onto a benchmark CSV by `instance`, filling `true_orbits`/
+`gt_source` and recomputing `status` (EXACT when `recovered_orbits == true_orbits` and `unknown ==
+0`, PARTIAL otherwise; skipped entirely, as if no ground truth existed, when `gt_subdivided` is
+`true`) — printing a `DISAGREEMENT` line for any certified-but-mismatched row rather than silently
+overwriting it.
 
 ### 1.3 The threshold
 
@@ -98,6 +117,30 @@ RESULT
   peak_rss_mb
 ```
 
+FINAL_MEASUREMENTS_SPEC.md Task 1 added further diagnostic columns not repeated here (`wl1_original`,
+`pi_subdivision`, `pi_to_original`, `colouring_used`, `subdivided`, `subdivision_mode`, `n_solved`,
+`filter_mode`, plus Task 2's `global_edge_clause_estimate`/`per_query_edge_clause_estimate`) — see
+that spec's own reporting-schema section for what each means. `subdivision_mode` records `AUTO` or
+`OFF` for the whole run (from `--noSubdivision`), not a per-instance decision — `subdivided` is the
+per-instance one.
+
+**`--noSubdivision=true`** forces `dispatchColouring` to skip the subdivision + initial-phase
+comparison entirely and use plain 1-WL on every non-bipartite instance, for a family where that
+comparison (see FINAL_MEASUREMENTS_SPEC.md Task 1's own survey table) always resolves to 1-WL
+anyway. Two reasons to use it: it's strictly faster (no `sd(g)`, no `DecompositionStore` on it — see
+the disk-space note above), and it puts every family in a run on the same never-subdivided basis, so
+configs/families are being compared on identical terms rather than some silently subdividing and
+others not depending on `dispatchColouring`'s own per-instance choice. Pair with
+`scripts/ground_truth.py --subdivide=never` when checking such a run against ground truth — see Part
+1's own note on why `true_orbits` and `recovered_orbits` are only the same count when neither side
+subdivides.
+
+**`--minVertices`** (default `0`) is `--maxVertices`'s floor: skip any instance whose original `n` is
+below it, gating on the same quantity. Exists to resume a campaign past an older CSV whose column
+schema predates a later addition (Task 1/2's diagnostic columns, `subdivision_mode`, etc.) without
+re-running everything that CSV already covers — point a fresh `--out` at `--minVertices=<one past the
+old run's largest n>` rather than trying to append rows of a different shape into the old file.
+
 **Query scheduling.** Every query gets the full per-query timeout is the naive approach, but a small
 number of genuinely hard queries then dominate wall-clock time even though most queries resolve in
 milliseconds. Two-pass scheduling fixes this: a cheap short-budget sweep over every pending pair
@@ -108,13 +151,45 @@ why `--timeoutMs`/`--shortMs` are separate CLI parameters rather than one timeou
 ### 2.2 Status
 
 ```
-CERTIFIED   unknown == 0                              (the queries prove the partition)
-EXACT       unknown == 0 AND recovered == true_orbits (certified and independently confirmed)
-PARTIAL     unknown >= 1                              (regardless of any agreement)
+CERTIFIED         unknown == 0                              (the queries prove the partition)
+EXACT             unknown == 0 AND recovered == true_orbits (certified and independently confirmed)
+PARTIAL           unknown >= 1                              (regardless of any agreement)
+PI_ONLY           class_size_max/n exceeded a size guard    (colouring reported, SAT never attempted)
+SKIPPED_TOO_LARGE both edge-clause estimates exceeded --edgeClauseThreshold (see Task 2 below)
+INSTANCE_TIMEOUT  solve phase exceeded --maxInstanceSolveMs (encoding was built; solve abandoned)
 ```
 
 **A row with `unknown >= 1` is never `EXACT`.** Agreement with ground truth on a partial run is a
 coincidence, not a result.
+
+**`SKIPPED_TOO_LARGE` (FINAL_MEASUREMENTS_SPEC.md Task 2).** `global_edge_clause_estimate` and
+`per_query_edge_clause_estimate` are `Sigma_edges |C(i)|*|C(k)|` for the GLOBAL colouring and for a
+representative per-query individualization of the largest class, respectively -- both computed in
+one pass from the colouring alone, no `CadicalSolver` ever constructed, so always safe regardless of
+instance size. Below `--edgeClauseThreshold` on the global estimate: solve GLOBAL as before. Above
+it but below threshold on the per-query estimate: solve via the per-query filter (`filter_mode =
+PER_QUERY`). Above threshold on both: `SKIPPED_TOO_LARGE`, with both numbers recorded rather than
+silently dropping the row -- the default threshold sits between a measured-safe ~1M and a
+measured-failing ~3.28M, not a hunted-for exact boundary, and the boundary is expected to be a
+smooth degradation, not a per-family cliff.
+`estimateGlobalEncodingSize`/`estimatePerQueryEncodingSize` are computed lazily where possible (the
+per-query estimate only when the global one alone doesn't already clear the threshold) -- computing
+it unconditionally required a full `DecompositionStore` build (a parallel BFS decomposition of the
+WHOLE graph) even on instances that were always going to be `GLOBAL`, which was a real, measured
+contributor to campaign wall-clock time before this was fixed.
+
+**`INSTANCE_TIMEOUT`.** `--maxInstanceSolveMs` (default 120000) is a hard WALL-CLOCK backstop on
+ONE instance's entire solve phase, independent of `--timeoutMs` (which only bounds a single query).
+A colour class with many members can need many queries before generator closure catches up --
+measured directly, `had-20` (80 members) took 26-62s despite every individual query resolving in
+~1s, because before the first witness closes anything, every candidate pair gets a real solve
+attempt with nothing to skip. Without this backstop a single pathological instance could stall an
+entire campaign indefinitely; with it, that instance's row is `INSTANCE_TIMEOUT` and the campaign
+moves on to the next one. The GLOBAL path enforces this via an external daemon-thread deadline
+(`driveToOrbitsCadicalParallel` itself is shared, validated code and isn't modified for this --
+CaDiCaL's native call won't actually stop on cancellation, so the abandoned solve keeps running in
+the background, but the campaign's own forward progress is what this backstop protects); the
+PER_QUERY path checks the same deadline between and within colour classes directly.
 
 ### 2.3 Invariants to assert per row
 
@@ -139,31 +214,70 @@ queries are sequential.
 ### 3.1 Design
 
 ```
-build Phi(G,c) ONCE                       -- read-only, shared
-partition the colour classes across W workers
+build Phi(G,c) ONCE per worker             -- CaDiCaL has no formula-sharing/solver-cloning API,
+                                               so this is recomputed per worker, not literally shared
 each worker:
-    its own CaDiCaL instance, loaded with the shared formula
-    processes its assigned classes sequentially
-    maintains union-find / separation state LOCAL to those classes
+    its own CaDiCaL instance
+    pulls classes one at a time from a SHARED atomic index into a queue ordered largest-first,
+        until the queue is exhausted -- no class is pre-assigned to any particular worker
+    maintains union-find / separation state LOCAL to whichever classes it drew
 join: the local partitions are disjoint by construction; concatenate
 ```
 
-No locking is required on the shared formula and no state is exchanged. **Do not share a solver
-between workers** — the incremental learned-clause state is what makes queries fast, and interleaving
-unrelated classes would destroy it.
+No locking is required beyond the shared index, and no state is exchanged between workers. **Do not
+share a solver between workers** — the incremental learned-clause state is what makes queries fast,
+and interleaving unrelated classes would destroy it.
 
-### 3.2 Load balancing
+**Two-pass scheduling is per-worker-global, not per-class.** Each worker short-passes every pair in
+every class it claims off the shared queue first, accumulating survivors across its WHOLE share, and
+only then long-passes those survivors — mirroring the single-threaded driver's graph-wide
+short-then-long structure, scoped to one worker's own solver. Doing short-then-long inside the claim
+loop (one class at a time) was tried and was a real bug, not a style choice: a worker's solver only
+warms up from the pairs it has actually queried, so resetting that warm-up on every class starves
+later classes' hard queries of the accumulated learned clauses that make them resolve cheaply.
+Confirmed directly: `cfi-rigid-d3-3600-02-1` at workers=1 (one solver — this MUST reduce to the
+single-threaded driver's exact behavior) went from 15 unknowns with per-class two-pass to 0 with
+per-worker-global two-pass, same instance, same timeout — every query resolved in the short pass
+once warm-up wasn't being discarded every class.
 
-Class sizes are uneven and cost is quadratic in orbits per class, so round-robin will straggle.
-Assign classes to workers by **longest-processing-time-first** on the estimate `|C|²`, recomputed as a
-static schedule before starting. Report the straggler ratio:
+### 3.2 Load balancing — dynamic, not estimated
+
+A static schedule (longest-processing-time-first on the estimate `|C|²`, computed once before
+starting) was tried and dropped. **Finding, worth a sentence in the paper:** on families with
+near-uniform colour classes (e.g. `cfi-rigid-d3` at n=2160: every class has 6-9 members), wall-clock
+cost is not driven by query count — it's driven by a handful of individually hard queries near the
+per-query timeout, and which classes contain those hard queries has no correlation with `|C|`.
+Measured directly: 4 workers given IDENTICAL estimated cost under the static schedule finished in
+75s-114s, a 40%+ spread, because the estimator carried no real signal for this family. SAT hardness
+isn't a function of any cheap structural feature, so the fix is not a better estimator — it's not
+predicting at all. A worker that draws a slow class simply ends up processing fewer classes overall;
+the straggler is bounded by at most one class's duration, not one worker's entire pre-assigned share.
+Confirmed on the same instance: after switching to the dynamic queue, `straggler_ratio` went from
+1.18-1.21 to 1.00 and total solve time improved, with per-worker class counts varying wildly (one
+worker can legitimately process 10x more classes than another) while all workers finish within a
+few hundred ms of each other.
+
+Classes are still queued largest-first — not because size predicts cost well (it doesn't, per
+above), but to avoid the tail case where the LAST class claimed off the queue is also the biggest
+one; standard practice for dynamic scheduling under unknown durations.
+
+A shared warm-up prefix (every worker priming on the same small set of classes before racing for
+the queue) was tried and dropped: it reintroduces the exact imbalance the dynamic queue exists to
+prevent, since a worker that finishes its priming pass even slightly faster gets a head start and
+can claim most of the queue before the others start competing. Measured directly: one worker
+claimed 521 of 560 classes while three others got 12-14 each, and `straggler_ratio` rose to 1.35
+from the ~1.00 baseline without it. The fair-start assumption behind the dynamic queue (workers
+begin racing for the shared index at the same time) doesn't survive adding any variable-duration
+step before that race begins.
 
 ```
 straggler_ratio = max_worker_ms / mean_worker_ms
 ```
 
-A ratio near 1 means the schedule is good; a large ratio means one class dominates and the speedup is
-capped by it — which is itself worth reporting.
+`straggler_ratio` is still the reported metric, but it now measures how well the **queue** balanced
+itself, not how good a cost estimate was — there is no cost estimate driving scheduling anymore.
+Expect it near 1; a large ratio now means the queue drained unevenly (e.g. too few classes relative
+to worker count), not an estimator failure.
 
 ### 3.3 The scaling measurement
 

@@ -1,0 +1,14 @@
+COMPILE=@COMPILE@
+LINK=ar
+all: libcadiback.a libcadiback.so
+libcadiback.a: cadiback.o ../cadical/build/libcadical.a makefile
+	$(LINK) rcs $@ cadiback.o
+libcadiback.so: cadiback.o ../cadical/build/libcadical.so makefile
+	$(COMPILE) -shared -o $@ -L../cadical/build/ -lcadical cadiback.o
+cadiback.o: cadiback.cpp config.hpp ../cadical/src/cadical.hpp makefile
+	$(COMPILE) -c $< -I../cadical/src
+config.hpp: generate VERSION makefile
+	./generate > $@
+clean:
+	rm -f cadiback.o config.hpp cadiback makefile test/*log test/*err
+.PHONY: all clean format test

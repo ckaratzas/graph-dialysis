@@ -137,6 +137,13 @@ std::vector<int32_t> readIntArray(JNIEnv* env, jintArray arr) {
 
 jintArray newIntArray(JNIEnv* env, const std::vector<int32_t>& v) {
     jintArray arr = env->NewIntArray((jsize)v.size());
+    // NewIntArray returns null (with a pending OutOfMemoryError already thrown on env) when the
+    // JVM heap is exhausted -- confirmed as a real, reachable case, not theoretical: a 2026-08-29
+    // campaign run hit exactly this under memory pressure and, without this check, the null `arr`
+    // was passed straight into SetIntArrayRegion, which dereferences it -- a native SIGSEGV instead
+    // of the clean, already-handled-elsewhere-in-this-campaign Java OutOfMemoryError this should
+    // have been. Returning null here lets that pending exception propagate normally.
+    if (arr == nullptr) return nullptr;
     env->SetIntArrayRegion(arr, 0, (jsize)v.size(), v.data());
     return arr;
 }

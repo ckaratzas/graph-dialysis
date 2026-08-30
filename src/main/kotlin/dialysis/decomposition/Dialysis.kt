@@ -64,17 +64,26 @@ fun dialysis(g: Graph, root: Int): Decomposition {
     val inTree = BooleanArray(n)
     val parent = IntArray(n) { -1 }
     inTree[root] = true
+    // One reused primitive membership buffer for "is v in this level's band" across all levels,
+    // instead of a fresh boxed HashSet<Int> (plus a boxed filtered List<Int>) per level per root
+    // -- this loop runs once per vertex needing work (DecompositionStore.build's own measured
+    // dominant cost), so the boxing/hashing there was real, not incidental.
+    val inBand = BooleanArray(n)
     for (i in 0 until levels.size - 1) {
-        val band = (levels[i].asSequence() + levels[i + 1].asSequence()).toHashSet()
+        for (u in levels[i]) inBand[u] = true
+        for (u in levels[i + 1]) inBand[u] = true
         for (v in levels[i + 1]) {
-            val bandNeighbors = g.adj[v].filter { it in band }
-            if (bandNeighbors.size != 1) continue
-            val candidate = bandNeighbors[0]
+            var count = 0
+            var candidate = -1
+            for (w in g.adj[v]) if (inBand[w]) { count++; candidate = w }
+            if (count != 1) continue
             if (inTree[candidate]) {
                 inTree[v] = true
                 parent[v] = candidate
             }
         }
+        for (u in levels[i]) inBand[u] = false
+        for (u in levels[i + 1]) inBand[u] = false
     }
     val treeVerts = (0 until n).filter { inTree[it] }.toIntArray()
 

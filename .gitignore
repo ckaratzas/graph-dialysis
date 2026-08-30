@@ -1,6 +1,7 @@
 .gradle
 .claude
 build/
+fvs-campaign-*.tar.gz
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
@@ -55,7 +56,7 @@ tools/nauty/Traces
 tools/nauty/showg
 
 ### Benchmark results (generated, not committed) ###
-results/
+_results.v1/
 
 ### Experiment logs (generated, not committed) ###
 logs/
