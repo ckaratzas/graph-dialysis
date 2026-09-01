@@ -27,6 +27,9 @@ that some automorphism maps onto each other. The approach:
 No symmetry-breaking predicates anywhere in this pipeline — they would exclude models and could
 silently turn a genuine SAT instance into UNSAT, corrupting certification.
 
+The formal writeup — *Certified Orbit Computation by Satisfiability: Structural Invariants and their
+Boundaries* — is archived on Zenodo: <https://zenodo.org/records/22214525>.
+
 ## Layout
 
 ```
