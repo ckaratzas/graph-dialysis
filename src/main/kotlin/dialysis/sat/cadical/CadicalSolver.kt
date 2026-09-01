@@ -36,6 +36,7 @@ class CadicalSolver : AutoCloseable {
     private external fun nativeAssume(handle: Long, lit: Int)
     private external fun nativeSolve(handle: Long, deadlineEpochMs: Long): Int
     private external fun nativeVal(handle: Long, lit: Int): Int
+    private external fun nativeConflicts(handle: Long): Long
 
     private val handle: Long = nativeInit()
     private var released = false
@@ -71,6 +72,12 @@ class CadicalSolver : AutoCloseable {
     /** IPASIR `val()`: the value of [lit] under the last SAT model -- sign convention matches
      *  DIMACS (positive = true), only meaningful right after a [solve] that returned [Result.SAT]. */
     fun value(lit: Int): Int = nativeVal(handle, lit)
+
+    /** CaDiCaL's own cumulative CDCL conflict count for this solver instance -- across every
+     *  [solve] call made so far, not reset per call. For the distance-clause ablation
+     *  (INVARIANT_FILTERED_SAT_SPEC.md Part 1.6): compare this before/after a batch of queries
+     *  with and without the implied distance clauses added. */
+    fun conflicts(): Long = nativeConflicts(handle)
 
     override fun close() {
         if (!released) { nativeRelease(handle); released = true }

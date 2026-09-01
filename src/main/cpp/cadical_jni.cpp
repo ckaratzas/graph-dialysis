@@ -92,4 +92,10 @@ JNIEXPORT jint JNICALL Java_dialysis_sat_cadical_CadicalSolver_nativeVal(JNIEnv*
     return ccadical_val(reinterpret_cast<Handle*>(handlePtr)->solver, lit);
 }
 
+// For the distance-clause ablation (INVARIANT_FILTERED_SAT_SPEC.md Part 1.6) -- meaningful any
+// time after nativeInit, cumulative since solver creation (CaDiCaL's own stat, not reset per solve()).
+JNIEXPORT jlong JNICALL Java_dialysis_sat_cadical_CadicalSolver_nativeConflicts(JNIEnv*, jobject, jlong handlePtr) {
+    return ccadical_get_statistic(reinterpret_cast<Handle*>(handlePtr)->solver, "conflicts");
+}
+
 }  // extern "C"

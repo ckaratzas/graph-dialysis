@@ -135,6 +135,10 @@ int64_t ccadical_irredundant (CCaDiCaL *wrapper) {
   return ((Wrapper *) wrapper)->solver->irredundant ();
 }
 
+int64_t ccadical_get_statistic (CCaDiCaL *wrapper, const char *name) {
+  return ((Wrapper *) wrapper)->solver->get_statistic_value (name);
+}
+
 int ccadical_fixed (CCaDiCaL *wrapper, int lit) {
   return ((Wrapper *) wrapper)->solver->fixed (lit);
 }

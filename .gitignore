@@ -56,10 +56,12 @@ tools/nauty/Traces
 tools/nauty/showg
 
 ### Benchmark results (generated, not committed) ###
-_results.v1/
+#_results.v1/
 
 ### Experiment logs (generated, not committed) ###
 logs/
 
 ### True-orbit cache (generated via cachedTrueOrbits, not committed) ###
 .orbit-cache/
+
+submission/

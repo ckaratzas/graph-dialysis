@@ -42,6 +42,11 @@ int ccadical_get_option (CCaDiCaL *, const char *name);
 void ccadical_print_statistics (CCaDiCaL *);
 int64_t ccadical_active (CCaDiCaL *);
 int64_t ccadical_irredundant (CCaDiCaL *);
+// Thin passthrough to Solver::get_statistic_value, added for dialysis's own JNI binding (see
+// cadical_jni.cpp) -- needed to report CDCL conflict counts for the distance-clause ablation
+// (INVARIANT_FILTERED_SAT_SPEC.md Part 1.6); no other function here exposes it. Returns -1 if
+// [name] is not a recognized statistic (Solver's own documented contract).
+int64_t ccadical_get_statistic (CCaDiCaL *, const char *name);
 int ccadical_fixed (CCaDiCaL *, int lit);
 int ccadical_trace_proof (CCaDiCaL *, FILE *, const char *);
 void ccadical_close_proof (CCaDiCaL *);

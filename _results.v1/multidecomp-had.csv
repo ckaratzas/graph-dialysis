@@ -1,0 +1,13 @@
+instance,n,m,class_size,components_remaining,true_orbits_in_class,residual_pairs,total_queries,total_time_ms,control_ok,any_round_skipped_too_large
+graphs/had/had-1,4,4,4,2,1,1,8,26,true,false
+graphs/had/had-2,8,12,8,1,1,0,4,40,true,false
+graphs/had/had-4,16,40,16,4,1,6,8,41,true,false
+graphs/had/had-8,32,144,32,1,1,0,25,127,true,false
+graphs/had/had-12,48,312,48,1,1,0,31,257,true,false
+graphs/had/had-16,64,544,64,1,1,0,42,696,true,false
+graphs/had/had-20,80,840,80,16,1,120,239,1340,true,false
+graphs/had/had-24,96,1200,96,1,1,0,102,20759,true,false
+graphs/had/had-28,112,1624,112,32,1,496,422,11036,true,false
+graphs/had/had-32,128,2112,128,16,1,120,359,67902,true,false
+graphs/had/had-36,144,2664,144,32,1,496,545,214421,true,false
+graphs/had/had-40,160,3280,160,20,1,190,595,513788,true,false

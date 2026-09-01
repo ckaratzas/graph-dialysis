@@ -1,0 +1,15 @@
+family,instance,n,m,n_effective,true_orbits,gt_ms,gt_timed_out,gt_outcome,gt_tool,gt_memory_cap_mb,gt_timeout_s,gt_subdivided
+ag,graphs/ag/ag2-11,253,1452,253,2,3,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-13,351,2366,351,2,5,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-16,528,4352,528,2,6,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-17,595,5202,595,2,5,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-19,741,7220,741,2,5,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-2,10,12,10,2,3,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-23,1081,12696,1081,2,6,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-25,1275,16250,1275,2,11,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-3,21,36,21,2,5,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-4,36,80,36,2,4,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-5,55,150,55,2,3,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-7,105,392,105,2,3,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-8,136,576,136,2,2,false,OK,traces,4096,3600,false
+ag,graphs/ag/ag2-9,171,810,171,2,5,false,OK,traces,4096,3600,false
